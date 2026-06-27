@@ -288,6 +288,11 @@ function displayKline(data, type) {
         volumes.push([dates.length - 1, item.Volume, close >= open ? 1 : -1]);
     });
     
+    const defaultVisible = 120;
+    const dataLen = klineData.length;
+    const zoomStart = dataLen > defaultVisible ? ((dataLen - defaultVisible) / dataLen * 100) : 0;
+    const zoomEnd = 100;
+
     const option = {
         backgroundColor: '#fff',
         animation: false,
@@ -361,16 +366,16 @@ function displayKline(data, type) {
             {
                 type: 'inside',
                 xAxisIndex: [0, 1],
-                start: 0,
-                end: 100
+                start: zoomStart,
+                end: zoomEnd
             },
             {
                 show: true,
                 xAxisIndex: [0, 1],
                 type: 'slider',
                 top: '93%',
-                start: 0,
-                end: 100
+                start: zoomStart,
+                end: zoomEnd
             }
         ],
         series: [

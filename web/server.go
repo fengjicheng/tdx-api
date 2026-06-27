@@ -108,6 +108,11 @@ func handleGetQuote(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// 根据 Decimal 修正价格倍数（ETF 等 3 位小数品种需回退 ×10）
+	for _, q := range quotes {
+		adjustQuotePrice(q)
+	}
+
 	successResponse(w, quotes)
 }
 
@@ -176,6 +181,15 @@ func getQfqKlineDay(code string) (*protocol.KlineResp, error) {
 		return nil, fmt.Errorf("同花顺前复权数据为空")
 	}
 
+	// 从 TDX 获取原始 K 线补充成交额（THS 接口不返回 Amount）
+	tdxResp, tdxErr := client.GetKlineDayAll(code)
+	amountMap := make(map[int64]protocol.Price)
+	if tdxErr == nil && tdxResp != nil {
+		for _, v := range tdxResp.List {
+			amountMap[v.Time.Unix()] = v.Amount
+		}
+	}
+
 	// 转换为 protocol.KlineResp 格式
 	resp := &protocol.KlineResp{
 		Count: uint16(len(klines)),
@@ -191,6 +205,12 @@ func getQfqKlineDay(code string) (*protocol.KlineResp, error) {
 			Close:  k.Close,
 			Volume: k.Volume,
 			Amount: k.Amount,
+		}
+		// 从 TDX 数据补充成交额
+		if pk.Amount == 0 && amountMap != nil {
+			if amt, ok := amountMap[k.Date]; ok {
+				pk.Amount = amt
+			}
 		}
 		// 设置昨收价（使用上一条K线的收盘价）
 		if i > 0 {
@@ -643,6 +663,49 @@ func handleTaskOperations(w http.ResponseWriter, r *http.Request) {
 	}
 
 	errorResponse(w, "任务不存在")
+}
+
+// adjustQuotePrice 根据 Decimal 修正 Quote 中 K 线的价格倍数
+// 协议层 DecodeK 统一 ×10 将分转为厘，但 ETF 等 3 位小数品种不应 ×10
+func adjustQuotePrice(q *protocol.Quote) {
+	if q == nil {
+		return
+	}
+	decimal := getDecimal(q.Exchange.String() + q.Code)
+	if decimal == 3 {
+		q.K.Last /= 10
+		q.K.Open /= 10
+		q.K.High /= 10
+		q.K.Low /= 10
+		q.K.Close /= 10
+	}
+}
+
+// adjustKlinePrices 批量修正 Kline 列表的价格倍数
+func adjustKlinePrices(code string, list []*protocol.Kline) {
+	decimal := getDecimal(code)
+	if decimal == 3 {
+		for _, k := range list {
+			if k == nil {
+				continue
+			}
+			k.Open /= 10
+			k.High /= 10
+			k.Low /= 10
+			k.Close /= 10
+			k.Last /= 10
+			k.Amount /= 10
+		}
+	}
+}
+
+func getDecimal(fullCode string) int8 {
+	if tdx.DefaultCodes != nil {
+		if m := tdx.DefaultCodes.Get(fullCode); m != nil {
+			return m.Decimal
+		}
+	}
+	return 2
 }
 
 func splitCodes(param string) []string {

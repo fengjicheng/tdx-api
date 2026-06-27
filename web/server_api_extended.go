@@ -100,6 +100,10 @@ func handleBatchQuote(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	for _, q := range quotes {
+		adjustQuotePrice(q)
+	}
+
 	successResponse(w, quotes)
 }
 
@@ -108,6 +112,8 @@ func handleGetKlineHistory(w http.ResponseWriter, r *http.Request) {
 	code := r.URL.Query().Get("code")
 	klineType := r.URL.Query().Get("type")
 	limitStr := r.URL.Query().Get("limit")
+	startDateStr := strings.TrimSpace(r.URL.Query().Get("start_date"))
+	endDateStr := strings.TrimSpace(r.URL.Query().Get("end_date"))
 
 	if code == "" {
 		errorResponse(w, "股票代码不能为空")
@@ -166,16 +172,50 @@ func handleGetKlineHistory(w http.ResponseWriter, r *http.Request) {
 	default:
 		// 日K线使用前复权
 		resp, err = getQfqKlineDay(code)
-		if err == nil && len(resp.List) > int(limit) {
-			// 只返回最近limit条
-			resp.List = resp.List[len(resp.List)-int(limit):]
-			resp.Count = limit
-		}
 	}
 
 	if err != nil {
 		errorResponse(w, fmt.Sprintf("获取K线失败: %v", err))
 		return
+	}
+
+	// 按 start_date / end_date 过滤
+	if startDateStr != "" || endDateStr != "" {
+		var startTime, endTime time.Time
+		if startDateStr != "" {
+			t, e := parseWorkdayDate(startDateStr)
+			if e != nil {
+				errorResponse(w, "start_date 格式错误，应为 YYYYMMDD 或 YYYY-MM-DD")
+				return
+			}
+			startTime = t
+		}
+		if endDateStr != "" {
+			t, e := parseWorkdayDate(endDateStr)
+			if e != nil {
+				errorResponse(w, "end_date 格式错误，应为 YYYYMMDD 或 YYYY-MM-DD")
+				return
+			}
+			endTime = t
+		}
+
+		filtered := make([]*protocol.Kline, 0, len(resp.List))
+		for _, k := range resp.List {
+			if !startTime.IsZero() && k.Time.Before(startTime) {
+				continue
+			}
+			if !endTime.IsZero() && k.Time.After(endTime.Add(24*time.Hour)) {
+				continue
+			}
+			filtered = append(filtered, k)
+		}
+		resp.List = filtered
+		resp.Count = uint16(len(filtered))
+	}
+
+	if len(resp.List) > int(limit) && limit > 0 {
+		resp.List = resp.List[len(resp.List)-int(limit):]
+		resp.Count = limit
 	}
 
 	successResponse(w, resp)

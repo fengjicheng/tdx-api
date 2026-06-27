@@ -26,6 +26,7 @@ Thumbs.db
 *.dylib
 *.test
 *.out
+*.rar
 
 # Go
 vendor/
